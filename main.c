@@ -3,31 +3,32 @@
 #include <stdio.h>
 #include <unistd.h>
 
-// 将 Surface 保存为临时 PNG 并通过 xclip 复制到剪贴板
 void CopySurfaceToClipboard(SDL_Surface* surface) {
-    // 检查是否有 xclip
-    if (system("which xclip > /dev/null 2>&1") != 0) {
-        printf("Error: xclip not found. Please install it using 'sudo apt install xclip'\n");
+    // 1. 检查是否有 wl-copy
+    if (system("which wl-copy > /dev/null 2>&1") != 0) {
+        printf("Error: wl-copy not found. Please install 'wl-clipboard'.\n");
         return;
     }
 
-    // 将 Surface 暂时保存到内存缓冲区或临时文件
-    // 这里为了代码简洁，使用 SDL_image 导出到临时文件，再由 xclip 读取
     const char* temp_file = "/tmp/sdl_clipboard_temp.png";
+    
+    // 2. 保存 Surface 为 PNG
     if (IMG_SavePNG(surface, temp_file) != 0) {
         printf("Failed to save temp image: %s\n", IMG_GetError());
         return;
     }
 
-    // 构造命令：将图片内容存入剪贴板 (selection clipboard)
+    // 3. 构造 Wayland 复制命令
+    // wl-copy 直接支持从文件读取，且会自动在后台维护剪贴板
     char command[256];
-    snprintf(command, sizeof(command), "xclip -selection clipboard -t image/png -i %s", temp_file);
+    snprintf(command, sizeof(command), "wl-copy -t image/png < %s", temp_file);
     
-    // if (system(command) == 0) {
-    //     printf("Image copied to clipboard!\n");
-    // }
+    if (system(command) == 0) {
+        printf("Image copied to clipboard via Wayland!\n");
+    }
 
-    // 删除临时文件
+    // 4. 删除临时文件
+    // wl-copy 会在读取完输入流后立即返回，所以这里删除是安全的
     unlink(temp_file);
 }
 
