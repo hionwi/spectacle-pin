@@ -1,35 +1,32 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
+
+// --- 新增：命中测试回调函数 ---
+SDL_HitTestResult HitTestCallback(SDL_Window* win, const SDL_Point* area, void* data) {
+    // 返回 DRAGGABLE 告诉系统，点击窗口任何位置都可以拖动
+    // 这在无边框窗口中完美替代了标题栏的作用
+    return SDL_HITTEST_DRAGGABLE;
+}
 
 void CopySurfaceToClipboard(SDL_Surface* surface) {
-    // 1. 检查是否有 wl-copy
     if (system("which wl-copy > /dev/null 2>&1") != 0) {
         printf("Error: wl-copy not found. Please install 'wl-clipboard'.\n");
         return;
     }
 
     const char* temp_file = "/tmp/sdl_clipboard_temp.png";
-    
-    // 2. 保存 Surface 为 PNG
     if (IMG_SavePNG(surface, temp_file) != 0) {
         printf("Failed to save temp image: %s\n", IMG_GetError());
         return;
     }
 
-    // 3. 构造 Wayland 复制命令
-    // wl-copy 直接支持从文件读取，且会自动在后台维护剪贴板
     char command[256];
     snprintf(command, sizeof(command), "wl-copy -t image/png < %s", temp_file);
-    
     if (system(command) == 0) {
         printf("Image copied to clipboard via Wayland!\n");
     }
-
-    // 4. 删除临时文件
-    // wl-copy 会在读取完输入流后立即返回，所以这里删除是安全的
-    unlink(temp_file);
 }
 
 int main(int argc, char* argv[]) {
@@ -41,7 +38,6 @@ int main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) return 1;
     IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG);
 
-    // 【关键】设置缩放质量：0 = nearest, 1 = linear, 2 = best (anisitropic)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "2");
 
     SDL_Surface* temp_surface = IMG_Load(argv[1]);
@@ -49,16 +45,18 @@ int main(int argc, char* argv[]) {
         printf("Could not load image: %s\n", IMG_GetError());
         return 1;
     }
-    // --- 启动时复制 ---
+
     CopySurfaceToClipboard(temp_surface);
 
     int img_w = temp_surface->w;
     int img_h = temp_surface->h;
     
-    // 创建无边框窗口
     SDL_Window* window = SDL_CreateWindow("k-review", 
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 
-        img_w, img_h, SDL_WINDOW_BORDERLESS);
+        img_w, img_h, SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP);
+
+    // 【关键】为 Wayland 设置命中测试，实现丝滑拖拽
+    SDL_SetWindowHitTest(window, HitTestCallback, NULL);
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, temp_surface);
@@ -67,48 +65,38 @@ int main(int argc, char* argv[]) {
     int quit = 0;
     SDL_Event e;
     float scale = 1.0f;
-    int is_dragging = 0;
-    int mouse_x, mouse_y;
 
     while (!quit) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) quit = 1;
 
-            // 右键退出
+            // --- 新增：按键监听 ---
+            if (e.type == SDL_KEYDOWN) {
+                switch (e.key.keysym.sym) {
+                    case SDLK_ESCAPE: // 按下 Esc 退出
+                        quit = 1;
+                        break;
+                    // 你可以在这里继续添加其他快捷键，比如按 'r' 重置缩放
+                }
+            }
+
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
                 quit = 1;
             }
 
-            // 鼠标滚轮缩放
             if (e.type == SDL_MOUSEWHEEL) {
-                if (e.wheel.y > 0) scale *= 1.05f; // 缩小步长让缩放更丝滑
+                if (e.wheel.y > 0) scale *= 1.05f;
                 else if (e.wheel.y < 0) scale /= 1.05f;
                 
-                // 动态调整窗口大小
+                // 缩放时调整窗口大小
                 SDL_SetWindowSize(window, (int)(img_w * scale), (int)(img_h * scale));
             }
-
-            // 窗口拖拽逻辑
-            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                is_dragging = 1;
-                SDL_GetGlobalMouseState(&mouse_x, &mouse_y);
-            }
-            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-                is_dragging = 0;
-            }
-            if (e.type == SDL_MOUSEMOTION && is_dragging) {
-                int curr_x, curr_y;
-                SDL_GetGlobalMouseState(&curr_x, &curr_y);
-                int win_x, win_y;
-                SDL_GetWindowPosition(window, &win_x, &win_y);
-                SDL_SetWindowPosition(window, win_x + (curr_x - mouse_x), win_y + (curr_y - mouse_y));
-                mouse_x = curr_x;
-                mouse_y = curr_y;
-            }
+            
+            // 注意：这里不再需要手动写 MOUSEMOTION 的拖拽逻辑了
+            // 系统会自动帮你处理
         }
 
         SDL_RenderClear(renderer);
-        // 将纹理完整渲染到当前窗口大小，SDL 会根据 Hint 自动进行平滑缩放
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
