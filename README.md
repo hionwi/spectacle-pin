@@ -1,2 +1,5 @@
 # spectacle-pin
-将spectacle截屏贴在桌面上 / Paste the Spectacle screenshot onto your desktop.
+1. sudo apt install xclip
+2. mkdir ~/Scripts
+3. cd ~/Scripts && git clone https://github.com/hionwi/spectacle-pin.git .
+4. 添加 k-pin.sh 的快捷键 / Add a shortcut to k-pin.sh
